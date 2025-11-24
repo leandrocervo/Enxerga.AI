@@ -1,0 +1,136 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Navegação Assistida</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+      margin: 0;
+    }
+    video {
+      width: 100%;
+      max-width: 600px;
+      height: auto;
+      border: 2px solid #333;
+      border-radius: 8px;
+    }
+    canvas {
+      display: none;
+    }
+    button {
+      font-size: 18px;
+      padding: 10px 20px;
+      margin: 10px;
+      border-radius: 6px;
+      background-color: #333;
+      color: white;
+      border: none;
+    }
+    #output {
+      margin-top: 20px;
+      font-size: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Navegação Assistida</h1>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div>
+    <button onclick="startDetection()">Iniciar</button>
+    <button onclick="stopDetection()">Parar</button>
+  </div>
+  <div id="output">Objetos detectados aparecerão aqui.</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+  <script>
+    const video = document.getElementById('video');
+    const output = document.getElementById('output');
+    let model, interval;
+    let isDetecting = false;
+
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      return new Promise(resolve => {
+        video.onloadedmetadata = () => resolve(video);
+      });
+    }
+
+    async function startDetection() {
+      if (isDetecting) return;
+      isDetecting = true;
+      await setupCamera();
+      model = await cocoSsd.load();
+      interval = setInterval(detectFrame, 1500);
+    }
+
+    function stopDetection() {
+      isDetecting = false;
+      clearInterval(interval);
+      speechSynthesis.cancel();
+      output.textContent = 'Detecção parada.';
+    }
+
+    async function detectFrame() {
+      if (!model || !isDetecting) return;
+      const predictions = await model.detect(video);
+      const objects = [...new Set(predictions.map(p => p.class))];
+      const translated = objects.map(obj => translate(obj));
+      const description = translated.length > 0
+        ? `Você está em um ambiente com ${formatList(translated)}.`
+        : 'Nenhum objeto detectado.';
+      output.textContent = description;
+      speak(description);
+      enviarDeteccao(translated);
+    }
+
+    function translate(obj) {
+      const dictionary = {
+        person: "pessoa", chair: "cadeira", tv: "televisão", bed: "cama",
+        couch: "sofá", table: "mesa", laptop: "computador portátil",
+        book: "livro", cellphone: "celular", refrigerator: "geladeira"
+      };
+      return dictionary[obj] || obj;
+    }
+
+    function formatList(items) {
+      if (items.length === 1) return items[0];
+      if (items.length === 2) return items.join(' e ');
+      return items.slice(0, -1).join(', ') + ' e ' + items[items.length - 1];
+    }
+
+    function speak(text) {
+      if (!speechSynthesis.speaking) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'pt-BR';
+        speechSynthesis.speak(utterance);
+      }
+    }
+
+    async function enviarDeteccao(objetos) {
+      const ambiente = inferirAmbiente(objetos);
+      const usuario = 'leandro';
+
+      await fetch('http://localhost:3000/detecao', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usuario, objetos, ambiente })
+      });
+    }
+
+    function inferirAmbiente(objetos) {
+      if (objetos.includes('cama') || objetos.includes('livro')) return 'quarto';
+      if (objetos.includes('geladeira') || objetos.includes('mesa')) return 'cozinha';
+      if (objetos.includes('sofá') || objetos.includes('televisão')) return 'sala';
+      return 'ambiente desconhecido';
+    }
+  </script>
+</body>
+</html>
